@@ -19,8 +19,26 @@ After compiling the codes use the following command to run simulation using CUDA
 ```
 mpirun -np 2 ./main
 ```
-
 where it is assumed that computer has two GPUs and code will automatically use both GPUs through MPI parallelization.
+
+To run the code on GPU clusters please refer to local GPU job submissino policy. Example jobfile used on [Qiming](https://newshub.sustech.edu.cn/en/html/202007/26934.html) supercomputer looks like following:
+
+```
+#!/bin/bash
+#BSUB -q hgx
+#BSUB -J channel
+#BSUB -n 4
+#BSUB -R "span[ptile=4]"
+#BSUB -gpu "num=4/host"
+#BSUB -W 48:00
+#BSUB -o stdout_%J.out
+#BSUB -e stderr_%J.err
+
+module load nvhpc/22.11
+
+/share/nvhpc/Linux_x86_64/22.11/comm_libs/mpi/bin/mpirun -np 4 ./main
+```
+where a node with 4 GPUs was requested.
 
 ## Examples
 
