@@ -42,6 +42,10 @@ where a node with 4 GPUs was requested.
 
 ## Examples
 
+*** Example channel flow ***
+
+*** DHIT ***
+
 ## Code details
 
 ### main.cu
