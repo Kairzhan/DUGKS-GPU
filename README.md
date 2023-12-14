@@ -70,7 +70,7 @@ s2Z0005000.tec
 
 In a summary, perform the following steps to run channel flow case:
 
-```
+```bash
 # Cd into example folder
 cd examples/channel
 
