@@ -57,6 +57,8 @@ cd examples/laminar
 mpirun -np 1 ./main
 
 # edit the file params.py, which contains output frequency,
+# this script creates the file VELMEAN.dat
+# which contains various profiles
 python3 ProcessProfiles.py # Averages profiles
 
 # then create plots
