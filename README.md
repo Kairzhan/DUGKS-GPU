@@ -105,10 +105,6 @@ gunzip ddf00000000.dat.gz
 # Run simuation on 4 GPUs ...
 mpirun -np 4 ./main
 
-# ... then copy gnuplot and postprocessing files
-cp ../../plots/*.plt .
-cp ../../plots/*.py .
-
 # edit the file params.py, which contains output frequency,
 python3 ProcessProfiles.py # Averages profiles
 
@@ -123,6 +119,12 @@ gnuplot log_plot.plt
 gnuplot stress_plot.plt
 gnuplot rms_plot.plt
 ```
+<!--
+# ... then copy gnuplot and postprocessing files
+cp ../../plots/*.plt .
+cp ../../plots/*.py .
+-->
+
 Following files will then contain plots:
 
 ```
