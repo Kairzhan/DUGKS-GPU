@@ -1,4 +1,4 @@
-# DUGKS-CUDA
+# DUGKS-GPU
 Multi-GPU implementation of the DUGKS method[^1][^2].
 
 [^1]: Guo Z. et al, Discrete unified gas kinetic scheme for all Knudsen number flows: Low-speed isothermal case, Phys. Rev. E 88, 033305, 2013, https://doi.org/10.1103/PhysRevE.88.033305
