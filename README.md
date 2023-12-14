@@ -99,6 +99,14 @@ gnuplot log_plot.plt
 gnuplot stress_plot.plt
 gnuplot rms_plot.plt
 ```
+Following files will then contain plots:
+
+```
+Contour.pdf
+Ulog.pdf
+Ustress.pdf
+Urms.pdf
+```
 
 <!-- ## Code details
 
