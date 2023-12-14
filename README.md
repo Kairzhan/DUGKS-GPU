@@ -54,7 +54,21 @@ ndump=6000000
 
 Where *restart=1* indicates that initial condition will be loaded from dump file, and the dump file contains data for timestep 0 (*nrestart=0*). Total of 6 000 000 steps will be performed, and every 6 000 000 steps code will create dumpfiles for restarting purposes.
 
-*** DHIT ***
+After compiling the code, place the executable main into the directory examples/channel, and run the simulation using mpirun or using batch system of your computer cluster. Output will be saved into the following files:
+
+```
+diag.dat
+profiles-2.dat
+s2X0000001.tec
+s2Y0000001.tec
+s2Z0000001.tec
+s2X0005000.tec
+s2Y0005000.tec
+s2Z0005000.tec
+...
+```
+
+### Decaying Homogeneous Isotropic Turbulence
 
 ## Code details
 
