@@ -1,0 +1,649 @@
+module dugks
+  integer, parameter :: npop=19
+  integer, parameter :: nx=128*2
+  integer, parameter :: ny=128*2
+  integer, parameter :: nz=128*2
+  real, parameter :: xwidth=128.*1
+  real, parameter :: ywidth=128.*1
+  real, parameter :: zwidth=128.*1
+  real, parameter :: dx=xwidth/nx, dy=ywidth/ny, dz=zwidth/nz
+  real, parameter :: rho0=1.0
+  real, parameter :: RT=1./3.
+  real, parameter :: pi=3.14159265
+  real, parameter :: pi2=2*pi
+  real, parameter :: cfl=0.2
+  real, managed :: tau
+  real :: visc  
+  real :: Re
+  real, parameter :: vel_scale=0.1
+
+  real, managed :: dt, hdt
+
+  real, managed :: cx, cy, cz
+
+  real, managed :: bw0, fw0
+  real, managed :: bw1, bw2
+  real, managed :: fw1, fw2
+  real, managed :: gw1, gw2
+  real, managed :: qw1, qw2
+
+  real, parameter :: ww0 = 1.0/3.0
+  real, parameter :: ww1 = 1.0/18.0
+  real, parameter :: ww2 = 1.0/36.0
+  real, parameter, dimension(0:npop-1) :: tp= &
+       [ww0, ww1, ww1, ww1, ww1, ww1, ww1, ww2, ww2, ww2, ww2, ww2, ww2, ww2, ww2, ww2, ww2, ww2, ww2]
+  !                                               0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17  18
+  integer, parameter, dimension(0:npop-1) :: cix=[0,  1, -1,  0,  0,  0,  0,  1, -1,  1, -1,  1, -1,  1, -1,  0,  0,  0,  0]
+  integer, parameter, dimension(0:npop-1) :: ciy=[0,  0,  0,  1, -1,  0,  0,  1,  1, -1, -1,  0,  0,  0,  0,  1, -1,  1, -1]
+  integer, parameter, dimension(0:npop-1) :: ciz=[0,  0,  0,  0,  0,  1, -1,  0,  0,  0,  0,  1,  1, -1, -1,  1,  1, -1, -1]
+  integer, parameter, dimension(0:npop-1) :: opp=[0,  2,  1,  4,  3,  6,  5, 10,  9,  8,  7, 14, 13, 12, 11, 18, 17, 16, 15]
+
+  ! Data on the device memory
+  ! real, device, allocatable, dimension(:,:,:) :: rho
+  ! real, device, allocatable, dimension(:,:,:) :: ux, uy, uz
+  real, device, allocatable, dimension(:,:,:,:) :: f, fb
+
+  ! Data on the host memory (notice the h_ prefix)
+  real, allocatable, dimension(:,:,:) :: h_rho
+  real, allocatable, dimension(:,:,:) :: h_ux, h_uy, h_uz
+  real, allocatable, dimension(:,:,:,:) :: h_f
+
+contains
+
+  !---------------------------------------------------
+  ! Allocate memory and assign required values
+  !---------------------------------------------------
+  subroutine initialize_dugks
+    implicit none
+    integer :: i, j, k
+    integer :: ip
+    real :: eu, uv
+    real :: llx, lly, llz
+    real :: x, y, z
+    real(8), allocatable, dimension(:,:,:,:) :: loaded_f
+
+    allocate(loaded_f(0:npop-1, 1:nx, 1:ny, 1:nz))
+    ! open(100, file="ddf000009550.dat", access="stream", status="old")
+    open(100, file="ddf000000000.dat", access="stream", status="old")
+    read(100) loaded_f
+    close(100)
+
+    allocate(f(0:npop-1, 0:nx+1, 0:ny+1, 0:nz+1))
+    allocate(fb(0:npop-1, 0:nx+1, 0:ny+1, 0:nz+1))
+
+    ! allocate(rho(nx, ny, nz))
+    ! allocate(ux(nx, ny, nz))
+    ! allocate(uy(nx, ny, nz))
+    ! allocate(uz(nx, ny, nz))
+
+    allocate(h_f(0:npop-1, 0:nx+1, 0:ny+1, 0:nz+1))
+
+    allocate(h_rho(nx, ny, nz))
+    allocate(h_ux(nx, ny, nz))
+    allocate(h_uy(nx, ny, nz))
+    allocate(h_uz(nx, ny, nz))
+
+    dt=cfl*dx/sqrt(6*RT)
+    hdt=dt/2
+    print *, "dt=", dt, hdt
+
+    cx=dt/dx
+    cy=dt/dy
+    cz=dt/dz
+    print *,"cx, cy, cz", cx, cy, cz
+
+    Re=1885
+    visc=0.012395*1 !0.012395 !xwidth*vel_scale/Re
+    tau=visc/RT
+
+    bw0=(3.*tau*hdt)/(2.*tau+dt)
+    bw1=(2.*tau-hdt)/(2.*tau+dt)
+    bw2=3.*hdt/(2.*tau+dt)
+
+    fw0=tau*hdt/(2.*tau+hdt)
+    fw1=2.*tau/(2.*tau+hdt)
+    fw2=hdt/(2.*tau+hdt)
+
+    print *, "bwX, fwX=", bw0, bw1, bw2, fw0, fw1, fw2
+
+    llx=xwidth/pi2
+    lly=ywidth/pi2
+    llz=zwidth/pi2
+
+    ! ! Initialize velocity field
+    ! do k=1, nz
+    !    z=(k-0.5)*dz
+    !    do j=1, ny
+    !       y=(j-0.5)*dy
+    !       do i=1, nx
+    !          x=(i-0.5)*dx
+    !          ! h_ux(i,j,k) = sin(2*pi/nx*(i-0.5)*dx)*cos((j-0.5)*dy)*cos((k-0.5)*dz)
+    !          ! h_uy(i,j,k) = -cos((i-0.5)*dx)*sin((j-0.5)*dy)*cos((k-0.5)*dz)
+    !          h_rho(i,j,k) = rho0+rho0*vel_scale**2/16*(cos(2*x/llx)+cos(2*y/lly))*(cos(2*z/llz)+2)/RT
+    !          h_ux(i,j,k) = vel_scale*sin(x/llx)*cos(y/lly)*cos(z/llz)
+    !          h_uy(i,j,k) = -vel_scale*cos(x/llx)*sin(y/lly)*cos(z/llz)
+    !          h_uz(i,j,k) = 0
+    !       enddo
+    !    enddo
+    ! enddo
+
+    ! do k=1, nz
+    !    do j=1, ny
+    !       do i=1, nx
+    !          do ip=0, npop-1
+    !             eu=(cix(ip)*h_ux(i,j,k)+ciy(ip)*h_uy(i,j,k)+ciz(ip)*h_uz(i,j,k))/RT
+    !             uv=(h_ux(i,j,k)**2+h_uy(i,j,k)**2+h_uz(i,j,k)**2)/RT
+
+    !             h_f(ip, i, j, k)=tp(ip)*h_rho(i,j,k)*(1+eu+0.5*(eu*eu-uv))
+    !          enddo
+    !       enddo
+    !    enddo
+    ! enddo
+
+    ! ! rho=h_rho
+    ! ! ux=h_ux
+    ! ! uy=h_uy
+    ! ! uz=h_uz    
+
+    ! f=h_f
+
+    f(:, 1:nx,1:ny,1:nz)=loaded_f(:,1:nx,1:ny,1:nz)
+  endsubroutine initialize_dugks
+
+  !---------------------------------------------------
+  ! First prepare f^bar+ at cell center
+  !---------------------------------------------------
+  attributes(global) subroutine prepare_fb(f)
+    implicit none
+    real, device, dimension(0:npop-1, 0:nx+1, 0:ny+1, 0:nz+1) :: f
+    integer :: i, j, k
+    integer :: ip
+    real :: r, u, v, w
+    real :: eu, uv
+    real, dimension(0:npop-1) :: feq
+
+    i=blockDim%x*(blockIdx%x-1)+threadIdx%x
+    j=blockDim%y*(blockIdx%y-1)+threadIdx%y
+    k=blockDim%z*(blockIdx%z-1)+threadIdx%z
+
+    ! Let's first compute macroscopic variables
+    ! from current DF
+    r=0
+    u=0
+    v=0
+    w=0
+
+    do ip=0, npop-1
+       r=r+f(ip, i, j, k)
+       u=u+cix(ip)*f(ip, i, j, k)
+       v=v+ciy(ip)*f(ip, i, j, k)
+       w=w+ciz(ip)*f(ip, i, j, k)
+    enddo
+
+    u=u/r
+    v=v/r
+    w=w/r
+
+    ! then compute feq
+    do ip=0, npop-1
+       eu=(cix(ip)*u+ciy(ip)*v+ciz(ip)*w)/RT
+       uv=(u*u+v*v+w*w)/RT
+
+       feq(ip)=tp(ip)*r*(1+eu+0.5*(eu*eu-uv))
+    enddo
+
+    ! now compute f^{bar+} at cell center
+    do ip=0, npop-1
+       fb(ip, i, j, k) = bw1*f(ip, i, j, k)+bw2*feq(ip)
+       !       fb(ip, i, j, k) = f(ip, i, j, k)+feq(ip)
+    enddo
+
+  endsubroutine prepare_fb
+
+  attributes(global) subroutine extend
+    implicit none
+    integer :: i, j, k
+
+    i=blockDim%x*(blockIdx%x-1)+threadIdx%x
+    j=blockDim%y*(blockIdx%y-1)+threadIdx%y
+    k=blockDim%z*(blockIdx%z-1)+threadIdx%z
+
+    ! This is for walls
+    ! if (i==1) then
+    !    fb(:, 0, j, k)=2*fb(:, 1, j, k)-fb(:, 2, j, k)
+    ! else if (i==nx) then
+    !    fb(:, nx+1, j, k)=2*fb(:, nx, j, k)-fb(:, nx-1, j, k)
+    ! endif
+
+    ! if (j==1) then
+    !    fb(:, i, 0, k)=2*fb(:, i, 1, k)-fb(:, i, 2, k)
+    ! else if (j==ny) then
+    !    fb(:, i, ny+1, k)=2*fb(:, i, ny, k)-fb(:, i, ny-1, k)
+    ! endif
+
+    ! if (k==1) then
+    !    fb(:, i, j, 0)=2*fb(:, i, j, 1)-fb(:, i, j, 2)
+    ! else if (k==nz) then
+    !    fb(:, i, j, nz+1)=2*fb(:, i, j, nz)-fb(:, i, j, nz-1)
+    ! endif
+
+    ! and this is for periodicity 
+    if (i==1) then
+       fb(:, 0, j, k)=fb(:, nx, j, k)
+    else if (i==nx) then
+       fb(:, nx+1, j, k)=fb(:, 1, j, k)
+    endif
+
+    if (j==1) then
+       fb(:, i, 0, k)=fb(:, i, ny, k)
+    else if (j==ny) then
+       fb(:, i, ny+1, k)=fb(:, i, 1, k)
+    endif
+
+    if (k==1) then
+       fb(:, i, j, 0)=fb(:, i, j, nz)
+    else if (k==nz) then
+       fb(:, i, j, nz+1)=fb(:, i, j, 1)
+    endif
+  endsubroutine extend
+
+  !---------------------------------------------------
+  ! Evolve f
+  !---------------------------------------------------
+  attributes(global) subroutine calc_fx(f)
+    implicit none
+    real, device, dimension(0:npop-1, 0:nx+1, 0:ny+1, 0:nz+1) :: f
+    integer :: i, j, k
+    integer :: i0, j0, k0
+    !    integer :: i00, j00, k00
+    integer :: ip
+    real :: eu, uv
+    real, dimension(0:npop-1) :: feq
+    real, dimension(0:npop-1, 0:5) :: f_temp
+    ! real, dimension(0:npop-1, -1:1, -1:1, -1:1) :: f27
+    ! real, device, dimension(0:npop-1, -1:1, -1:1, -1:1) :: f27
+    real, shared, dimension(0:npop-1, 0:17, 0:9, 0:2) :: f27
+
+    ! integer, parameter, dimension(0:npop-1) :: cix=[0,  1, -1,  0,  0,  0,  0,  1, -1,  1, -1,  1, -1,  1, -1,  0,  0,  0,  0]
+    ! integer, parameter, dimension(0:npop-1) :: ciy=[0,  0,  0,  1, -1,  0,  0,  1,  1, -1, -1,  0,  0,  0,  0,  1, -1,  1, -1]
+    ! integer, parameter, dimension(0:npop-1) :: ciz=[0,  0,  0,  0,  0,  1, -1,  0,  0,  0,  0,  1,  1, -1, -1,  1,  1, -1, -1]
+
+
+    !    real :: fa
+    !    real :: gx,gy,gz
+
+    integer :: ii, jj, kk
+    real :: mx0, my0, mz0
+    real :: mx1, my1, mz1
+    real :: r, u, v, w
+
+    i=blockDim%x*(blockIdx%x-1)+threadIdx%x
+    j=blockDim%y*(blockIdx%y-1)+threadIdx%y
+    k=blockDim%z*(blockIdx%z-1)+threadIdx%z
+
+    i0=threadIdx%x
+    j0=threadIdx%y
+    k0=threadIdx%z
+
+    ! i00=blockDim%x*(blockIdx%x-1)
+    ! j00=blockDim%y*(blockIdx%y-1)
+    ! k00=blockDim%z*(blockIdx%z-1)
+
+    ! ! this works but not efficient
+    ! if (i0==1 .and. j0==1 .and. k0==1) then
+    !    f27(:, 0:17, 0:9, 0:2)=fb(:, i00:i00+17, j00:j00+9, k00:k00+2)
+    ! endif
+    ! call syncthreads()
+
+    f27(:,i0, j0, k0)=fb(:, i, j, k)
+
+    if (i0==1) then
+       f27(:,  0, j0, k0-1)=fb(:, i-1, j, k-1)
+       f27(:,  0, j0, k0)=fb(:, i-1, j, k)
+       f27(:,  0, j0, k0+1)=fb(:, i-1, j, k+1)
+    elseif (i0==16) then
+       f27(:, 17, j0, k0-1)=fb(:, i+1, j, k-1)
+       f27(:, 17, j0, k0)=fb(:, i+1, j, k)
+       f27(:, 17, j0, k0+1)=fb(:, i+1, j, k+1)
+    endif
+
+    if (j0==1) then
+       f27(:, i0, 0, k0-1)=fb(:, i, j-1, k-1)
+       f27(:, i0, 0, k0)=fb(:, i, j-1, k)
+       f27(:, i0, 0, k0+1)=fb(:, i, j-1, k+1)
+    elseif (j0==8) then
+       f27(:, i0, 9, k0-1)=fb(:, i, j+1, k-1)
+       f27(:, i0, 9, k0)=fb(:, i, j+1, k)
+       f27(:, i0, 9, k0+1)=fb(:, i, j+1, k+1)
+    endif
+
+    if (k0==1) then
+       f27(:, i0, j0, 0)=fb(:, i, j, k-1)
+       f27(:, i0, j0, 2)=fb(:, i, j, k+1)
+    endif
+
+    ! diagonal elements
+    if (i0==1 .and. j0==1) then
+       f27(:, 0, 0, 0)=fb(:, i-1, j-1, k-1)
+       f27(:, 0, 0, 1)=fb(:, i-1, j-1, k)
+       f27(:, 0, 0, 2)=fb(:, i-1, j-1, k+1)
+    endif
+
+    if (i0==16 .and. j0==1) then
+       f27(:, 17, 0, 0)=fb(:, i+1, j-1, k-1)
+       f27(:, 17, 0, 1)=fb(:, i+1, j-1, k)
+       f27(:, 17, 0, 2)=fb(:, i+1, j-1, k+1)
+    endif
+
+    if (i0==1 .and. j0==8) then
+       f27(:, 0, 9, 0)=fb(:, i-1, j+1, k-1)
+       f27(:, 0, 9, 1)=fb(:, i-1, j+1, k)
+       f27(:, 0, 9, 2)=fb(:, i-1, j+1, k+1)
+    endif
+
+    if (i0==16 .and. j0==8) then
+       f27(:, 17, 9, 0)=fb(:, i+1, j+1, k-1)
+       f27(:, 17, 9, 1)=fb(:, i+1, j+1, k)
+       f27(:, 17, 9, 2)=fb(:, i+1, j+1, k+1)
+    endif
+
+    call syncthreads()
+
+    ! TODO: copy fb stencil to local (register) memory
+    ! do kk=-1,1
+    !    do jj=-1,1
+    !       do ii=-1,1
+    !          f27(:,ii,jj,kk)=fb(:,i+ii,j+jj,k+kk)
+    !       enddo
+    !    enddo
+    ! enddo
+    ! ! f27(:,-1:1, -1:1, -1:1)=fb(:, i-1:i+1, j-1:j+1, k-1:k+1)
+
+    ! TODO: do not forget f(0), ip==0 case!
+    f_temp(0, 1)=0.5*(f27(0, i0, j0, k0)+f27(0,i0+1, j0, k0))
+    f_temp(0, 0)=0.5*(f27(0, i0, j0, k0)+f27(0,i0-1, j0, k0))
+
+    f_temp(0, 3)=0.5*(f27(0, i0, j0, k0)+f27(0, i0, j0+1, k0))
+    f_temp(0, 2)=0.5*(f27(0, i0, j0, k0)+f27(0, i0, j0-1, k0))
+
+    f_temp(0, 5)=0.5*(f27(0, i0, j0, k0)+f27(0, i0, j0, k0+1))
+    f_temp(0, 4)=0.5*(f27(0, i0, j0, k0)+f27(0, i0, j0, k0-1))
+
+    ! x-direction flux terms
+    do ip=1, npop-1
+       ! mx, my and mz are fractions used in interpolation
+       mx1=(dx/2-hdt*cix(ip))/dx
+       my1=(-hdt*ciy(ip))/dy
+       mz1=(-hdt*ciz(ip))/dz
+
+       mx0=1-mx1
+       my0=my1
+       mz0=mz1
+
+       ! positive x
+       ii=1
+       jj=-ciy(ip)
+       kk=-ciz(ip)
+
+       f_temp(ip, 1)=trilinear(&
+            f27(ip,    i0,    j0, k0), &
+            f27(ip, i0+ii,    j0, k0), &
+            f27(ip,    i0, j0+jj, k0), &
+            f27(ip, i0+ii, j0+jj, k0), &
+            f27(ip,    i0,    j0, k0+kk), &
+            f27(ip, i0+ii,    j0, k0+kk), &
+            f27(ip,    i0, j0+jj, k0+kk), &
+            f27(ip, i0+ii, j0+jj, k0+kk), &
+            (mx1), abs(my1), abs(mz1) & ! fixme: is abs enough?
+            )
+
+       ! negative x
+       ii=-1
+       ! jj=-ciy(ip)
+       ! kk=-ciz(ip)
+
+       f_temp(ip, 0)=trilinear(&
+            f27(ip,    i0,    j0, k0), &
+            f27(ip, i0+ii,    j0, k0), &
+            f27(ip,    i0, j0+jj, k0), &
+            f27(ip, i0+ii, j0+jj, k0), &
+            f27(ip,    i0,    j0, k0+kk), &
+            f27(ip, i0+ii,    j0, k0+kk), &
+            f27(ip,    i0, j0+jj, k0+kk), &
+            f27(ip, i0+ii, j0+jj, k0+kk), &
+                                ! f27(ip,  0,  0, 0), &
+                                ! f27(ip, ii,  0, 0), &
+                                ! f27(ip,  0, jj, 0), &
+                                ! f27(ip, ii, jj, 0), &
+                                ! f27(ip,  0,  0, kk), &
+                                ! f27(ip, ii,  0, kk), &
+                                ! f27(ip,  0, jj, kk), &
+                                ! f27(ip, ii, jj, kk), &
+            (mx0), abs(my0), abs(mz0) &
+            )
+    enddo
+
+    ! y-direction flux terms
+    do ip=1, npop-1
+       mx1=(-hdt*cix(ip))/dx
+       my1=(dy/2-hdt*ciy(ip))/dy
+       mz1=(-hdt*ciz(ip))/dz
+
+       mx0=mx1
+       my0=1-my1
+       mz0=mz1
+
+       ! positive y
+       ii=-cix(ip)
+       jj=1
+       kk=-ciz(ip)
+
+       ! fixme: do we change order of abcdefgh for other panels ?
+       f_temp(ip, 3)=trilinear(&
+            f27(ip,    i0,    j0, k0), &
+            f27(ip, i0+ii,    j0, k0), &
+            f27(ip,    i0, j0+jj, k0), &
+            f27(ip, i0+ii, j0+jj, k0), &
+            f27(ip,    i0,    j0, k0+kk), &
+            f27(ip, i0+ii,    j0, k0+kk), &
+            f27(ip,    i0, j0+jj, k0+kk), &
+            f27(ip, i0+ii, j0+jj, k0+kk), &
+                                ! f27(ip,  0,  0, 0), &
+                                ! f27(ip, ii,  0, 0), &
+                                ! f27(ip,  0, jj, 0), &
+                                ! f27(ip, ii, jj, 0), &
+                                ! f27(ip,  0,  0, kk), &
+                                ! f27(ip, ii,  0, kk), &
+                                ! f27(ip,  0, jj, kk), &
+                                ! f27(ip, ii, jj, kk), &
+            abs(mx1), (my1), abs(mz1) & ! fixme: is abs enough?
+            )
+
+       ! negative y
+       !       ii=-cix(ip)
+       jj=-1
+       !       kk=-ciz(ip)
+
+       f_temp(ip, 2)=trilinear(&
+            f27(ip,    i0,    j0, k0), &
+            f27(ip, i0+ii,    j0, k0), &
+            f27(ip,    i0, j0+jj, k0), &
+            f27(ip, i0+ii, j0+jj, k0), &
+            f27(ip,    i0,    j0, k0+kk), &
+            f27(ip, i0+ii,    j0, k0+kk), &
+            f27(ip,    i0, j0+jj, k0+kk), &
+            f27(ip, i0+ii, j0+jj, k0+kk), &
+                                ! f27(ip,  0,  0, 0), &
+                                ! f27(ip, ii,  0, 0), &
+                                ! f27(ip,  0, jj, 0), &
+                                ! f27(ip, ii, jj, 0), &
+                                ! f27(ip,  0,  0, kk), &
+                                ! f27(ip, ii,  0, kk), &
+                                ! f27(ip,  0, jj, kk), &
+                                ! f27(ip, ii, jj, kk), &
+            abs(mx0), (my0), abs(mz0) &
+            )
+    enddo
+
+    ! z-direction flux terms
+    do ip=1, npop-1
+       mx1=(-hdt*cix(ip))/dx
+       my1=(-hdt*ciy(ip))/dy
+       mz1=(dz/2-hdt*ciz(ip))/dz
+
+       mx0=mx1
+       my0=my1
+       mz0=1-mz1
+
+       ! positive z
+       ii=-cix(ip)
+       jj=-ciy(ip)
+       kk=1
+
+       f_temp(ip, 5)=trilinear(&
+            f27(ip,    i0,    j0, k0), &
+            f27(ip, i0+ii,    j0, k0), &
+            f27(ip,    i0, j0+jj, k0), &
+            f27(ip, i0+ii, j0+jj, k0), &
+            f27(ip,    i0,    j0, k0+kk), &
+            f27(ip, i0+ii,    j0, k0+kk), &
+            f27(ip,    i0, j0+jj, k0+kk), &
+            f27(ip, i0+ii, j0+jj, k0+kk), &
+                                ! f27(ip,  0,  0, 0), &
+                                ! f27(ip, ii,  0, 0), &
+                                ! f27(ip,  0, jj, 0), &
+                                ! f27(ip, ii, jj, 0), &
+                                ! f27(ip,  0,  0, kk), &
+                                ! f27(ip, ii,  0, kk), &
+                                ! f27(ip,  0, jj, kk), &
+                                ! f27(ip, ii, jj, kk), &
+            abs(mx1), abs(my1), (mz1) & ! fixme: is abs enough?
+            )
+
+       ! negative z
+       !       ii=-cix(ip)
+       !       jj=-ciy(ip)
+       kk=-1
+
+       f_temp(ip, 4)=trilinear(&
+            f27(ip,    i0,    j0, k0), &
+            f27(ip, i0+ii,    j0, k0), &
+            f27(ip,    i0, j0+jj, k0), &
+            f27(ip, i0+ii, j0+jj, k0), &
+            f27(ip,    i0,    j0, k0+kk), &
+            f27(ip, i0+ii,    j0, k0+kk), &
+            f27(ip,    i0, j0+jj, k0+kk), &
+            f27(ip, i0+ii, j0+jj, k0+kk), &
+                                ! f27(ip,  0,  0, 0), &
+                                ! f27(ip, ii,  0, 0), &
+                                ! f27(ip,  0, jj, 0), &
+                                ! f27(ip, ii, jj, 0), &
+                                ! f27(ip,  0,  0, kk), &
+                                ! f27(ip, ii,  0, kk), &
+                                ! f27(ip,  0, jj, kk), &
+                                ! f27(ip, ii, jj, kk), &
+            abs(mx0), abs(my0), (mz0) &
+            )
+    enddo
+
+    ! compute fluxes
+    ! x-direction
+    call calc_macro(f_temp(:, 1), r, u, v, w)
+    call calc_feq(feq, r, u, v, w)
+    f_temp(:, 1)=fw1*f_temp(:, 1)+fw2*feq(:)
+
+    call calc_macro(f_temp(:, 0), r, u, v, w)
+    call calc_feq(feq, r, u, v, w)
+    f_temp(:, 0)=fw1*f_temp(:, 0)+fw2*feq(:)
+
+    ! y-direction
+    call calc_macro(f_temp(:, 3), r, u, v, w)
+    call calc_feq(feq, r, u, v, w)
+    f_temp(:, 3)=fw1*f_temp(:, 3)+fw2*feq(:)
+
+    call calc_macro(f_temp(:, 2), r, u, v, w)
+    call calc_feq(feq, r, u, v, w)
+    f_temp(:, 2)=fw1*f_temp(:, 2)+fw2*feq(:)
+
+    ! z-direction
+    call calc_macro(f_temp(:, 5), r, u, v, w)
+    call calc_feq(feq, r, u, v, w)
+    f_temp(:, 5)=fw1*f_temp(:, 5)+fw2*feq(:)
+
+    call calc_macro(f_temp(:, 4), r, u, v, w)
+    call calc_feq(feq, r, u, v, w)
+    f_temp(:, 4)=fw1*f_temp(:, 4)+fw2*feq(:)
+
+    do ip=0, npop-1
+       !       fa=fb(ip,i,j,k)*4./3.-f(ip,i,j,k)/3.
+       !       fa=f27(ip,i0,j0,k0)*4./3.-f(ip,i,j,k)/3.
+       ! r is reused as fa
+       r=f27(ip,i0,j0,k0)*4./3.-f(ip,i,j,k)/3.
+       ! uvw is reused as gx gy gz here
+       u=f_temp(ip, 1)-f_temp(ip, 0)
+       v=f_temp(ip, 3)-f_temp(ip, 2)
+       w=f_temp(ip, 5)-f_temp(ip, 4)
+       f(ip, i, j, k)=r -cx*cix(ip)*u-cy*ciy(ip)*v-cz*ciz(ip)*w
+       ! gx=f_temp(ip, 1)-f_temp(ip, 0)
+       ! gy=f_temp(ip, 3)-f_temp(ip, 2)
+       ! gz=f_temp(ip, 5)-f_temp(ip, 4)
+       ! f(ip, i, j, k)=fa -cx*cix(ip)*gx-cy*ciy(ip)*gy-cz*ciz(ip)*gz
+    enddo
+  endsubroutine calc_fx
+
+  attributes(device) subroutine calc_macro(f27, r, u, v, w)
+    implicit none
+    real :: r, u, v, w
+    real, dimension(0:npop-1) :: f27
+    integer :: ip
+
+    u=0
+    v=0
+    w=0
+    r=0
+    do ip=0, npop-1
+       r=r+f27(ip)
+       u=u+cix(ip)*f27(ip)
+       v=v+ciy(ip)*f27(ip)
+       w=w+ciz(ip)*f27(ip)
+    enddo
+    u=u/r
+    v=v/r
+    w=w/r
+  endsubroutine calc_macro
+
+  attributes(device) subroutine calc_feq(feq, r, u, v, w)
+    implicit none
+    real :: r, u, v, w
+    real, dimension(0:npop-1) :: feq
+    real :: eu, uv
+    integer :: ip
+
+    do ip=0, npop-1
+       eu=(cix(ip)*u+ciy(ip)*v+ciz(ip)*w)/RT
+       uv=(u*u+v*v+w*w)/RT
+
+       feq(ip)=tp(ip)*r*(1+eu+0.5*(eu*eu-uv))
+    enddo
+  endsubroutine calc_feq
+
+  attributes(device) real function trilinear(a, b, c, d, e, f, g, h, &
+       mx, my, mz)
+    real :: a, b, c, d, e, f, g, h
+    real :: mx, my, mz
+    real :: x00, x01, x10, x11
+    real :: y00, y11
+
+    ! trilinear= a
+
+    x00=(1-mx)*a+mx*b
+    x01=(1-mx)*c+mx*d
+    x10=(1-mx)*e+mx*f
+    x11=(1-mx)*g+mx*h
+
+    y00=(1-my)*x00+my*x01
+    y11=(1-my)*x10+my*x11
+
+    trilinear=(1-mz)*y00+mz*y11    
+  endfunction trilinear
+endmodule dugks

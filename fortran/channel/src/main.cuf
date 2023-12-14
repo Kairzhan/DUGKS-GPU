@@ -1,0 +1,312 @@
+program main
+  use cudafor
+  use dugks
+  implicit none
+
+  type(dim3) :: blocks, threads  
+  integer :: i, j, k, ip
+  real :: start, finish
+  integer :: istep
+  integer :: istat
+  
+  character(len=17) :: filename17
+  character(17) :: filename
+  real :: mysum
+
+  integer num, numdevices
+  type(cudadeviceprop) :: prop
+  
+  istat = cudaGetDeviceCount(numdevices)
+  do num = 0, numdevices-1
+     istat = cudaGetDeviceProperties(prop, num)
+     call printDeviceProperties(prop, num)
+  end do
+
+  ! WHICH DEVICE to USE ? for multi-GPU systems
+  istat=cudaSetDevice(0)
+  
+  print *, "Initialization:"
+  call initialize_dugks
+  istat=cudaDeviceSynchronize()
+
+  ! 128^3
+  blocks=dim3(8, 16, 128)
+  threads=dim3(16, 8, 1)
+
+  ! ! 192x384 channel
+  ! blocks=dim3(12, 48, 192)
+  ! threads=dim3(16, 8, 1)
+
+  ! 256^3
+  ! blocks=dim3(16, 32, 256)
+  ! threads=dim3(16, 8, 1)
+
+  print *, "test step:"
+  call cpu_time(start)  
+  do istep=1, 4000000
+     print *, istep
+     call prepare_fb<<<blocks, threads>>>(f, istep)
+     istat=cudaDeviceSynchronize()
+
+     ! ! deal with walls (TODO: put this into prepare_fb or test)
+     ! ! this wont work because second term on RHS is not resident
+     ! ! in memory says the compiler
+     ! fb(:,   0,   :,   :)=2*fb(:, 1, :, :)-fb(:, 2, :, :)
+     ! fb(:,nx+1,   :,   :)=2*fb(:,nx, :, :)-fb(:,nx-1, :, :)
+     ! fb(:,   :,   0,   :)=2*fb(:, :, 1, :)-fb(:, :, 2, :)
+     ! fb(:,   :,ny+1,   :)=2*fb(:, :,ny, :)-fb(:, :,ny-1, :)
+     ! fb(:,   :,   :   ,0)=2*fb(:, :, :, 1)-fb(:, :, :, 2)
+     ! fb(:,   :,   :,nz+1)=2*fb(:, :, :,nz)-fb(:, :, :,nz-1)
+
+     ! fb(:,   0,   :,   :)=fb(:, 1, :, :)
+     ! fb(:,nx+1,   :,   :)=fb(:,nx, :, :)
+     ! fb(:,   :,   0,   :)=fb(:, :, 1, :)
+     ! fb(:,   :,ny+1,   :)=fb(:, :,ny, :)
+     ! fb(:,   :,   :   ,0)=fb(:, :, :, 1)
+     ! fb(:,   :,   :,nz+1)=fb(:, :, :,nz)
+
+     ! ! periodicity
+     ! fb(:,   0,   :,   :)=fb(:, nx, :, :)
+     ! fb(:,nx+1,   :,   :)=fb(:, 1, :, :)
+     fb(:,   :,   0,   :)=fb(:, :,ny, :)
+     fb(:,   :,ny+1,   :)=fb(:, :, 1, :)
+     fb(:,   :,   :   ,0)=fb(:, :, :,nz)
+     fb(:,   :,   :,nz+1)=fb(:, :, :, 1)
+
+     call test<<<blocks, threads>>>(f, istep)
+     istat=cudaDeviceSynchronize()
+
+     ! Compute KE
+     if (istep==1 .or. mod(istep, 1000)==0) then
+        h_f=f
+
+        if (mod(istep, 500000)==0) then
+           write(filename17, "('fdump-',I7.7,'.dat')") istep
+           open(100, file=filename17, access="stream", status="unknown")
+           write(100) h_f(:, 1:nx, 1:ny, 1:nz)
+           close(100)
+        endif
+
+        do k=1, nz
+           do j=1, ny
+              do i=1, nx
+                 h_rho(i,j,k)=0
+                 h_ux(i,j,k)=0
+                 h_uy(i,j,k)=0
+                 h_uz(i,j,k)=0
+
+                 do ip=0, npop-1
+                    h_rho(i,j,k)=h_rho(i,j,k)+h_f(ip,i,j,k)
+                    h_ux(i,j,k)=h_ux(i,j,k)+cix(ip)*h_f(ip, i,j,k)
+                    h_uy(i,j,k)=h_uy(i,j,k)+ciy(ip)*h_f(ip, i,j,k)
+                    h_uz(i,j,k)=h_uz(i,j,k)+ciz(ip)*h_f(ip, i,j,k)
+                 enddo
+
+                 h_ux(i,j,k)=h_ux(i,j,k)/h_rho(i,j,k)
+                 h_uy(i,j,k)=h_uy(i,j,k)/h_rho(i,j,k)
+                 h_uz(i,j,k)=h_uz(i,j,k)/h_rho(i,j,k)
+              enddo
+           enddo
+        enddo
+
+        ! computer correct average velocity (nonuniform mesh)
+        mysum=0
+        do i=1, nx
+           mysum=mysum+sum(h_uy(i, :, :))/(ny*nz)*dxx(i)
+        enddo
+        mysum=mysum/xwidth
+
+        open(101, file="diag.dat", status="unknown", position="append")
+        write(101, "(I7.7,1X,4(1pe16.7,1X))") istep, sum(h_ux)/(nx*ny*nz), sum(h_uy)/(nx*ny*nz), sum(h_uz)/(nx*ny*nz), mysum
+!        write(101, "(I7.7,1X,3(1pe16.7,1X))") istep, sum(h_ux)/(nx*ny*nz), sum(h_uy())/(nx*ny*nz), sum(h_uz)/(nx*ny*nz)
+        close(101)
+
+        print *, "output:"
+        write(filename, "('s2Z',i9.9,'.tec')") istep
+        print *, filename
+        open(unit=100, file=filename, status="unknown")
+        write(100, *) 'TITLE = "DUGKS RESULTS"'
+        write(100, *) 'VARIABLES = "X", "Y", "Z", "RHO", "U", "V", "W"'
+        write(100, "('ZONE I=',i4,1x,', J=',i4,1x,', K=',i4,1x,'F=POINT')") nx, ny, 1
+
+        k=nz/2
+        do j=1, ny
+           do i=1, nx
+              write(100, "(3(f10.5,1x),4(1pe14.7,1X))") xc(i), (j-0.5)*dy, (k-0.5)*dz, &
+                                !           write(100, "(3(f10.5,1x),4(f10.7,1X))") i-0.5, j-0.5, k-0.5, &
+                   h_rho(i,j,k), h_ux(i,j,k), h_uy(i,j,k), h_uz(i,j,k)
+           enddo
+        enddo
+        close(100)
+
+        call statistics(istep, h_ux, h_uy, h_uz, nx, ny, nz)
+        
+        ! if (mod(istep, 100)==0) then
+        !    call dump_fstep(nx, ny, nz, h_ux, h_uy, h_uz, istep)
+        ! endif
+     
+        ! ke=0.5*sum(h_ux**2+h_uy**2+h_uz**2)/(nx*ny*nz)
+        ! open(100, file="KE.dat", status="unknown", position="append")
+        ! write(100, "(I6.6,1X,1pe16.9)") istep, ke
+        ! close(100)
+     endif
+  enddo
+  istat=cudaDeviceSynchronize()
+  call cpu_time(finish)
+  print '("Time = ",f9.3," seconds.")',finish-start
+
+  h_f=f
+  do k=1, nz
+     do j=1, ny
+        do i=1, nx
+           h_rho(i,j,k)=0
+           h_ux(i,j,k)=0
+           h_uy(i,j,k)=0
+           h_uz(i,j,k)=0
+
+!           do ip=0, npop-1
+           do ip=npop-1, 0, -1
+              h_rho(i,j,k)=h_rho(i,j,k)+h_f(ip,i,j,k)
+              h_ux(i,j,k)=h_ux(i,j,k)+cix(ip)*h_f(ip, i,j,k)
+              h_uy(i,j,k)=h_uy(i,j,k)+ciy(ip)*h_f(ip, i,j,k)
+              h_uz(i,j,k)=h_uz(i,j,k)+ciz(ip)*h_f(ip, i,j,k)
+           enddo
+
+           h_ux(i,j,k)=h_ux(i,j,k)/h_rho(i,j,k)
+           h_uy(i,j,k)=h_uy(i,j,k)/h_rho(i,j,k)
+           h_uz(i,j,k)=h_uz(i,j,k)/h_rho(i,j,k)
+        enddo
+     enddo
+  enddo
+
+!  write(filename, "") endstep
+  open(100, file="fdump-X.dat", access="stream", status="unknown")
+  write(100) h_f(:, 1:nx, 1:ny, 1:nz)
+  close(100)
+  
+  print *, "output:"
+  write(filename, "('sim',i9.9,'.tec')") 111
+  print *, filename
+  open(unit=100, file=filename, status="replace")
+  write(100, *) 'TITLE = "DUGKS RESULTS"'
+  write(100, *) 'VARIABLES = "X", "Y", "Z", "RHO", "U", "V", "W"'
+  write(100, "('ZONE I=',i4,1x,', J=',i4,1x,', K=',i4,1x,'F=POINT')") nx, ny, nz
+
+  do k=1, nz
+     do j=1, ny
+        do i=1, nx
+           write(100, "(3(f10.5,1x),4(1pe14.7,1X))") xc(i), (j-0.5)*dy, (k-0.5)*dz, &
+                !           write(100, "(3(f10.5,1x),4(f10.7,1X))") i-0.5, j-0.5, k-0.5, &
+                h_rho(i,j,k), h_ux(i,j,k), h_uy(i,j,k), h_uz(i,j,k)
+        enddo
+     enddo
+  enddo
+endprogram main
+
+subroutine printDeviceProperties(prop, num)
+  use cudafor
+  type(cudadeviceprop) :: prop
+  integer num
+  ilen = verify(prop%name, ' ', .true.)
+  write (*,900) "Device Number: "      ,num
+  write (*,901) "Device Name: "        ,prop%name(1:ilen)
+  write (*,903) "Total Global Memory: ",real(prop%totalGlobalMem)/1e9," Gbytes"
+  write (*,902) "sharedMemPerBlock: "  ,prop%sharedMemPerBlock," bytes"
+  write (*,900) "regsPerBlock: "       ,prop%regsPerBlock
+  write (*,900) "warpSize: "           ,prop%warpSize
+  write (*,900) "maxThreadsPerBlock: " ,prop%maxThreadsPerBlock
+  write (*,904) "maxThreadsDim: "      ,prop%maxThreadsDim
+  write (*,904) "maxGridSize: "        ,prop%maxGridSize
+  write (*,903) "ClockRate: "          ,real(prop%clockRate)/1e6," GHz"
+  write (*,902) "Total Const Memory: " ,prop%totalConstMem," bytes"
+  write (*,905) "Compute Capability Revision: ",prop%major,prop%minor
+  write (*,902) "TextureAlignment: "   ,prop%textureAlignment," bytes"
+  write (*,906) "deviceOverlap: "      ,prop%deviceOverlap
+  write (*,900) "multiProcessorCount: ",prop%multiProcessorCount
+  write (*,906) "integrated: "         ,prop%integrated
+  write (*,906) "canMapHostMemory: "   ,prop%canMapHostMemory
+  write (*,906) "ECCEnabled: "         ,prop%ECCEnabled
+  write (*,906) "UnifiedAddressing: "  ,prop%unifiedAddressing
+  write (*,900) "L2 Cache Size: "      ,prop%l2CacheSize
+  write (*,900) "maxThreadsPerSMP: "   ,prop%maxThreadsPerMultiProcessor
+900 format (a,i0)
+901 format (a,a)
+902 format (a,i0,a)
+903 format (a,f7.3,a)
+904 format (a,2(i0,1x,'x',1x),i0)
+905 format (a,i0,'.',i0)
+906 format (a,l0)
+  return
+endsubroutine printDeviceProperties
+
+! Binary dump
+subroutine dump_fstep(nx, ny, nz, fx, fy, fz, istep)
+  use iso_c_binding
+  implicit none
+  integer :: nx, ny, nz
+  integer :: istep
+  real(c_float), dimension(nx, ny, nz) :: fx, fy, fz
+  ! integer :: i, j, k
+  ! real :: dx, dy, dz
+  ! real :: pi
+  character(len=16) :: filename
+
+  write(filename, "('uuu',i9.9,'.dat')") istep
+  open(unit=100, file=filename, status="replace", access="stream")
+  write(100) fx
+  close(100)
+
+  write(filename, "('vvv',i9.9,'.dat')") istep
+  open(unit=100, file=filename, status="replace", access="stream")
+  write(100) fy
+  close(100)
+
+  write(filename, "('www',i9.9,'.dat')") istep
+  open(unit=100, file=filename, status="replace", access="stream")
+  write(100) fz
+  close(100)
+endsubroutine dump_fstep
+
+subroutine statistics(istep, ux, uy, uz, nx, ny, nz)
+  use dugks, only: xc
+  implicit none
+  integer, intent(in) :: istep
+  integer, intent(in) :: nx, ny, nz
+  real, dimension(nx, ny, nz), intent(in) :: ux, uy, uz
+  integer :: i
+  real :: nynz
+  real, dimension(nx) :: uprof
+  real, dimension(nx) :: stress
+  real, dimension(nx) :: urms
+  real, dimension(nx) :: vrms
+  real, dimension(nx) :: wrms
+  real :: uavg, vavg, wavg
+  
+  nynz=ny*nz
+  do i=1, nx
+     uavg=sum(ux(i, :, :))/nynz
+     vavg=sum(uy(i, :, :))/nynz
+     wavg=sum(uz(i, :, :))/nynz
+
+     ! velocity profile
+     uprof(i)=vavg
+
+     ! RMS fluctuations
+     ! urms(i)=sqrt(sum((uavg-ux(i,:,:))**2)/nynz)
+     ! vrms(i)=sqrt(sum((vavg-uy(i,:,:))**2)/nynz)
+     ! wrms(i)=sqrt(sum((wavg-uz(i,:,:))**2)/nynz)
+     urms(i)=sqrt(sum(ux(i,:,:)**2)/nynz-uavg**2)
+     vrms(i)=sqrt(sum(uy(i,:,:)**2)/nynz-vavg**2)
+     wrms(i)=sqrt(sum(uz(i,:,:)**2)/nynz-wavg**2)
+
+     ! stress xy
+     stress(i)=uavg*vavg-sum(ux(i,:,:)*uy(i,:,:))/nynz
+  enddo
+
+  open(100, file="profiles.dat", status="unknown", position="append")
+  write(100,"(I7.7)") istep
+  do i=1, nx
+     write(100, "(I4.4,1X,6(1PE16.7,1X))") i, xc(i), uprof(i), stress(i), urms(i), vrms(i), wrms(i)
+  enddo
+  close(100)
+endsubroutine statistics
