@@ -21,7 +21,7 @@ mpirun -np 2 ./main
 ```
 where it is assumed that computer has two GPUs and code will automatically use both GPUs through MPI parallelization.
 
-To run the code on GPU clusters please refer to local GPU job submissino policy. Example jobfile used on [Qiming](https://newshub.sustech.edu.cn/en/html/202007/26934.html) supercomputer looks like following:
+To run the code on GPU clusters please refer to the local GPU job submission policy. Shown below is an example jobfile used on the [Qiming](https://newshub.sustech.edu.cn/en/html/202007/26934.html) supercomputer:
 
 ```
 #!/bin/bash
@@ -38,7 +38,7 @@ module load nvhpc/22.11
 
 /share/nvhpc/Linux_x86_64/22.11/comm_libs/mpi/bin/mpirun -np 4 ./main
 ```
-where a node with 4 GPUs was requested.
+This jobfile requests a node with 4 GPUs.
 
 ## Examples
 
