@@ -42,7 +42,17 @@ This jobfile requests a node with 4 GPUs.
 
 ## Examples
 
-*** Example channel flow ***
+### Channel flow
+In this example turbulent flow in the channel is considered. Shear velocity based Reynolds number is Re_{\tau}=180. For this case, perturbed initial values for distribution function are provided and can be downloaded from the [remote dataset](https://newshub.sustech.edu.cn/en/html/202007/26934.html). Main parameters which control this simulation are (see config.txt):
+
+```
+restart=1
+nrestart=0
+nsteps=6000000
+ndump=6000000
+```
+
+Where *restart=1* indicates that initial condition will be loaded from dump file, and the dump file contains data for timestep 0 (*nrestart=0*). Total of 6 000 000 steps will be performed, and every 6 000 000 steps code will create dumpfiles for restarting purposes.
 
 *** DHIT ***
 
