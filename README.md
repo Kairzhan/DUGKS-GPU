@@ -44,7 +44,7 @@ This jobfile requests a node with 4 GPUs.
 
 ### Laminar channel flow
 
-Laminar channel flow is considered in this example. Channel center max. velocity is set to 0.1. To run this case use following commands:
+Laminar channel flow is considered in this example. Channel center max. velocity is set to 0.1. To run this case use the following commands:
 
 ```bash
 # Cd into example folder
