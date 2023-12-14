@@ -43,7 +43,7 @@ This jobfile requests a node with 4 GPUs.
 ## Examples
 
 ### Channel flow
-In this example turbulent flow in the channel is considered. Shear velocity based Reynolds number is Re_{\tau}=180. For this case, perturbed initial values for distribution function are provided and can be downloaded from the [remote dataset](https://newshub.sustech.edu.cn/en/html/202007/26934.html). Main parameters which control this simulation are (see config.txt):
+In this example turbulent flow in the channel is considered. Shear velocity based Reynolds number is **Re<sub>τ</sub>=180**. For this case, perturbed initial values for distribution function are provided and can be downloaded from the [Zenodo dataset](https://zenodo.org/doi/10.5281/zenodo.10377131). After downloading the file [ddf00000000.dat.gz](https://zenodo.org/records/10377132/files/ddf00000000.dat.gz?download=1) place it to the directory from which simulation will be started later. Note that this directory should also contain executable **main** and **config.txt** files. Main parameters which control this simulation are (see config.txt):
 
 ```
 restart=1
@@ -68,8 +68,34 @@ s2Z0005000.tec
 ...
 ```
 
-### Decaying Homogeneous Isotropic Turbulence
+In a summary, perform the following steps to run channel flow case:
 
-## Code details
+```
+# Cd into example folder
+cd examples/channel
+
+# Download input dataset
+curl -o ddf00000000.dat.gz https://zenodo.org/records/10377132/files/ddf00000000.dat.gz?download=1
+gunzip ddf00000000.dat.gz
+
+# Run simuation on 4 GPUs ...
+mpirun -np 4 ./main
+
+# ... then copy gnuplot and postprocessing files
+cp ../../plots/*.plt .
+cp ../../plots/*.py .
+
+# edit the file params.py, which contains output frequency,
+python3 ProcessProfiles.py # Averages profiles
+
+# then create plots
+gnuplot contour.plt 
+gnuplot log_plot.plt
+gnuplot stress_plot.plt
+gnuplot rms_plot.plt
+```
+
+<!-- ## Code details
 
 ### main.cu
+-->
