@@ -90,8 +90,8 @@ python3 ProcessProfiles.py # Averages profiles
 
 # Download benchmark data & split it into separate files
 curl -o ch180.dat https://jaxa-dns-database.jaxa.jp/channelflow/ch180.dat
-cat ch180.dat | awk 'NR >  79 && NR <145' > JAXA1.dat 
-cat ch180.dat | awk 'NR > 146 && NR <212' > JAXA2.dat 
+cat ch180.dat | awk 'NR >  80 && NR <145' > JAXA1.dat 
+cat ch180.dat | awk 'NR > 147 && NR <212' > JAXA2.dat 
 
 # then create plots
 gnuplot contour.plt 
