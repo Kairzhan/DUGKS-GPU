@@ -1,6 +1,8 @@
 #ifndef NUMERICS_H_
 #define NUMERICS_H_
 
+#include <string>
+
 #include "precision.h"
 
 namespace Numerics {

@@ -10,9 +10,9 @@ set key top left font ",16"
 
 u0=0.1
 visc=0.166
-L=128
+L=64
 F=8.10546875e-06
-nx=128
+nx=64
 dx=L/nx
 
 set xrange [0:1]

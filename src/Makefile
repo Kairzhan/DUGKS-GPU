@@ -2,8 +2,8 @@
 CC=mpic++
 
 # host cpu architecture
-CPU_ARCH=zen3
-#CPU_ARCH=native
+#CPU_ARCH=zen3
+CPU_ARCH=native
 
 # uncomment PREC4 for single precision
 CFLAGS=-O3 --c++20 -tp=${CPU_ARCH} -gpu=ptxinfo -g -Wall -Wno-unused-parameter -Minfo #-DPREC4=1

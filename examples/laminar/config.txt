@@ -1,13 +1,13 @@
 #####################
 case=channel
 
-xwidth=128
-ywidth=128
-zwidth=128
+xwidth=64
+ywidth=32
+zwidth=32
 
-nx=128
-ny=128
-nz=128
+nx=64
+ny=32
+nz=32
 
 restart=0
 nrestart=0
@@ -31,7 +31,7 @@ visc=0.166
 
 ambient_fx=0.0
 ambient_fy=0.0
-ambient_fz=8.10546875e-06
+ambient_fz=3.2421875e-5
 
 periods_x=0
 periods_y=1
