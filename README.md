@@ -66,7 +66,7 @@ gnuplot velprof.plt
 ```
 Output is saved in file U.pdf.
 
-This example also could be found on the [CodeOcean platform](https://codeocean.com/capsule/3b1e4f74-cdd3-4781-8923-8514d5923dfb/).
+***This example also could be found on the [CodeOcean platform](https://codeocean.com/capsule/3b1e4f74-cdd3-4781-8923-8514d5923dfb/).***
 
 ### Channel flow
 In this example turbulent flow in the channel is considered. Shear velocity based Reynolds number is **Re<sub>τ</sub>=180**. For this case, perturbed initial values for distribution function are provided and can be downloaded from the [Zenodo dataset](https://zenodo.org/doi/10.5281/zenodo.10377131). After downloading the file [ddf00000000.dat.gz](https://zenodo.org/records/10377132/files/ddf00000000.dat.gz?download=1) place it to the directory from which simulation will be started later. Note that this directory should also contain executable **main** and **config.txt** files. Main parameters which control this simulation are (see config.txt):
